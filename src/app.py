@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
-import random
+import datetime
 
 from hashlib import sha1
 from urllib.parse import urlencode, parse_qs
@@ -34,8 +34,9 @@ class Context():
 
     def _peer_id(self):
         lead_string = '000000'
-        random_digits = ''.join([str(random.randint(0, 9)) for _ in range(14)])
-        return lead_string + random_digits
+        date_today = datetime.date.today().isoformat()
+        date_hash = sha1(date_today.encode()).hexdigest()[:14]
+        return lead_string + date_hash
 
 
 class Client():
@@ -104,6 +105,7 @@ class Client():
         tracker_task = self.context.loop.create_task(tracker_coro)
         response_bytes = self.context.loop.run_until_complete(tracker_task)
         tracker_response = bencode.bdecode(response_bytes)
+        # TODO: store tracker id and interval
         return self.format_peer_list(tracker_response[b'peers'])
 
     def compose_url(self, base_url, request_params):
@@ -125,6 +127,10 @@ class Client():
         return peer_list
 
     # message passing
+    def handshake(self):
+        prefix = b"19" + b"BitTorrent protocol" + b"00000000"
+        return prefix + self.context.info_hash + self.context.peer_id
+
     async def get_file(self):
         peer_tasks = []
         for peer in self.context.peers:
@@ -134,7 +140,21 @@ class Client():
     async def peer_connection(self, peer):
         print("Connecting to {}".format(peer))
         ip, port = peer
-        reader, writer = await asyncio.open_connection(host=ip, port=port)
+        try:
+            fut = asyncio.open_connection(host=ip, port=port)
+            reader, writer = await asyncio.wait_for(fut, timeout=5)
+        except ConnectionRefusedError:
+            print("Connection to {} refused".format(ip))
+            return
+        except asyncio.TimeoutError:
+            print("Connection to {} timed out".format(ip))
+            return
+        handshake = self.handshake()
+        writer.write(handshake)
+        await writer.drain()
+        resp = await reader.read()
+        print(resp)
+        # handshake
         # determine pieces/blocks that the peer has
         # check if those are in the set of pieces
 
