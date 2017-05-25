@@ -2,6 +2,8 @@
 
 import asyncio
 import datetime
+import struct
+import socket
 
 from hashlib import sha1
 from urllib.parse import urlencode, parse_qs
@@ -33,10 +35,16 @@ class Context():
         return file
 
     def _peer_id(self):
-        lead_string = '000000'
+        lead_string = b'000000'
         date_today = datetime.date.today().isoformat()
-        date_hash = sha1(date_today.encode()).hexdigest()[:14]
+        date_hash = bytes(sha1(date_today.encode()).hexdigest()[:14], 'utf-8')
         return lead_string + date_hash
+
+
+class PeerMessage():
+
+    def __init__(self):
+        pass
 
 
 class Client():
@@ -72,10 +80,11 @@ class Client():
         if len(peers) == 0:
             for tracker_url in trackers:
                 # TODO: handle udp trackers
-                peers = self.make_tracker_request(tracker_url)
-                if peers:
+                self.make_tracker_request(tracker_url)
+                if self.context.peers:
                     break
-        self.context.peers = peers
+        else:
+            self.context.peers = peers
 
     def split_magnet_link(self, magnet_link):
         magnet_parts = parse_qs(magnet_link)
@@ -106,7 +115,8 @@ class Client():
         response_bytes = self.context.loop.run_until_complete(tracker_task)
         tracker_response = bencode.bdecode(response_bytes)
         # TODO: store tracker id and interval
-        return self.format_peer_list(tracker_response[b'peers'])
+        print(tracker_response[b'peers'])
+        self.context.peers = self.format_peer_list(tracker_response[b'peers'])
 
     def compose_url(self, base_url, request_params):
         return base_url + '?' + urlencode(request_params)
@@ -120,16 +130,27 @@ class Client():
     def format_peer_list(self, raw_peer_info):
         peer_list = []
         for i in range(0, len(raw_peer_info), 6):
-            chunk = raw_peer_info[i:i + 6]
-            ip = '{}.{}.{}.{}'.format(*chunk[0:4])
-            port = chunk[4] * 256 + chunk[5]
+            peer = raw_peer_info[i:i + 6]
+            ip = socket.inet_ntoa(peer[:4])
+            port = self.unpack_port(peer[4:])
             peer_list.append((ip, port))
         return peer_list
 
+    def unpack_port(self, port):
+        return struct.unpack('>H', port)[0]
+
     # message passing
     def handshake(self):
-        prefix = b"19" + b"BitTorrent protocol" + b"00000000"
-        return prefix + self.context.info_hash + self.context.peer_id
+        prefix = struct.pack('>B', 19)
+        name = b'BitTorrent protocol'
+        reserved = struct.pack('>8B', *([0]*8))
+        return b''.join((
+            prefix,
+            name,
+            reserved,
+            self.context.info_hash,
+            self.context.peer_id
+        ))
 
     async def get_file(self):
         peer_tasks = []
@@ -149,12 +170,12 @@ class Client():
         except asyncio.TimeoutError:
             print("Connection to {} timed out".format(ip))
             return
+        # handshake
         handshake = self.handshake()
         writer.write(handshake)
         await writer.drain()
         resp = await reader.read()
         print(resp)
-        # handshake
         # determine pieces/blocks that the peer has
         # check if those are in the set of pieces
 
