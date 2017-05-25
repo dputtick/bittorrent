@@ -1,2 +1,3 @@
 *.torrent
 __pycache__/
+*.txt
