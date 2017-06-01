@@ -47,6 +47,12 @@ class PeerMessage():
         pass
 
 
+class Peer():
+
+    def __init__(self):
+        pass
+
+
 class Client():
 
     def __init__(self):
@@ -143,7 +149,7 @@ class Client():
     def handshake(self):
         prefix = struct.pack('>B', 19)
         name = b'BitTorrent protocol'
-        reserved = struct.pack('>8B', *([0]*8))
+        reserved = struct.pack('>8B', *([0] * 8))
         return b''.join((
             prefix,
             name,
