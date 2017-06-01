@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import struct
 import socket
+import argparse
 
 from hashlib import sha1
 from urllib.parse import urlencode, parse_qs
@@ -23,11 +24,17 @@ class Context():
         self.raw_inputfile = self._read_file_binary(self.input_string)
 
     def _user_input(self):
-        input_type = 'magnet'
-        input_string = 'magnet_link.txt'
-        # input_type = 'torrent'
-        # input_string = 'sample.torrent'
-        return input_type, input_string
+        parser = argparse.ArgumentParser(description="Take user input")
+        parser.add_argument('-m', dest="magnet", help="Magnet link")
+        parser.add_argument('-t', dest="torrent", help="Torrent file")
+        args = parser.parse_args()
+        if args.magnet:
+            input_type = 'magnet'
+            input_path = args.magnet
+        elif args.torrent:
+            input_type = 'torrent'
+            input_path = args.torrent
+        return input_type, input_path
 
     def _read_file_binary(self, file_path):
         with open(file_path, 'rb') as file_object:
@@ -75,7 +82,7 @@ class Client():
         tracker_url = metafile_data[b'announce'].decode('utf-8')
         file_info = metafile_data[b'info']
         self.context.info_hash = self.info_hash(file_info)
-        self.context.peers = self._tracker_request(tracker_url)
+        self.context.peers = self.make_tracker_request(tracker_url)
 
     # magnet link
     def handle_magnet_link(self):
@@ -121,7 +128,6 @@ class Client():
         response_bytes = self.context.loop.run_until_complete(tracker_task)
         tracker_response = bencode.bdecode(response_bytes)
         # TODO: store tracker id and interval
-        print(tracker_response[b'peers'])
         self.context.peers = self.format_peer_list(tracker_response[b'peers'])
 
     def compose_url(self, base_url, request_params):
