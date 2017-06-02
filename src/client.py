@@ -14,15 +14,18 @@ import bencode
 import aiohttp
 
 
+PORT = 51413
+
+
 class Context():
 
     def __init__(self):
         self.loop = asyncio.get_event_loop()
-        self.port = 6881
+        self.port = PORT
         self.peer_id = self._peer_id()
         self.input_type, self.input_string = self._user_input()
         self.raw_inputfile = self._read_file_binary(self.input_string)
-        self.peers = []
+        self.peers = []  # do we want to store peers in a list or a dict?
 
     def _user_input(self):
         parser = argparse.ArgumentParser(description="Take user input")
@@ -56,6 +59,12 @@ class Context():
             return False
         else:
             raise RuntimeError("Error with peer list")
+
+
+class Tracker():
+
+    def __init__(self):
+        pass
 
 
 class PeerMessage():
