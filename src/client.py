@@ -22,6 +22,7 @@ class Context():
         self.peer_id = self._peer_id()
         self.input_type, self.input_string = self._user_input()
         self.raw_inputfile = self._read_file_binary(self.input_string)
+        self.peers = []
 
     def _user_input(self):
         parser = argparse.ArgumentParser(description="Take user input")
@@ -46,6 +47,15 @@ class Context():
         date_today = datetime.date.today().isoformat()
         date_hash = bytes(sha1(date_today.encode()).hexdigest()[:14], 'utf-8')
         return lead_string + date_hash
+
+    @property
+    def has_peers(self):
+        if self.peers:
+            return True
+        elif not self.peers:
+            return False
+        else:
+            raise RuntimeError("Error with peer list")
 
 
 class PeerMessage():
@@ -89,26 +99,27 @@ class Client():
         magnet_link = self.context.raw_inputfile.decode('utf-8')
         info_hash, trackers = self.split_magnet_link(magnet_link)
         self.context.info_hash = info_hash
-        peers = self.query_dht(info_hash)
-        if len(peers) == 0:
+        self.query_dht(info_hash)
+        if self.context.has_peers:
             for tracker_url in trackers:
-                # TODO: handle udp trackers
-                self.make_tracker_request(tracker_url)
-                if self.context.peers:
+                if tracker_url.startswith('http'):
+                    self.make_tracker_request(tracker_url)
+                elif tracker_url.startswith('udp'):
+                    # TODO: need to handle udp trackers here too
+                    pass
+                if self.context.has_peers:
                     break
-        else:
-            self.context.peers = peers
 
     def split_magnet_link(self, magnet_link):
         magnet_parts = parse_qs(magnet_link)
         trackers = magnet_parts.get('tr')
         hex_hash = magnet_parts['magnet:?xt'][0].lstrip('urn:btih:')
-        binary_hash = unhexlify(hex_hash)
-        return binary_hash, trackers
+        info_hash = unhexlify(hex_hash)
+        return info_hash, trackers
 
     # DHT
-    def query_dht(self, info_hash):
-        return []
+    def query_dht(self):
+        pass
 
     # tracker request
     def make_tracker_request(self, tracker_url):
