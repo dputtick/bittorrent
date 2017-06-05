@@ -23,27 +23,8 @@ class Context():
         self.loop = asyncio.get_event_loop()
         self.port = PORT
         self.peer_id = self._peer_id()
-        self.input_type, self.input_string = self._user_input()
-        self.raw_inputfile = self._read_file_binary(self.input_string)
-        self.peers = []  # do we want to store peers in a list or a dict?
-
-    def _user_input(self):
-        parser = argparse.ArgumentParser(description="Take user input")
-        parser.add_argument('-m', dest="magnet", help="Magnet link")
-        parser.add_argument('-t', dest="torrent", help="Torrent file")
-        args = parser.parse_args()
-        if args.magnet:
-            input_type = 'magnet'
-            input_path = args.magnet
-        elif args.torrent:
-            input_type = 'torrent'
-            input_path = args.torrent
-        return input_type, input_path
-
-    def _read_file_binary(self, file_path):
-        with open(file_path, 'rb') as file_object:
-            file = file_object.read()
-        return file
+        self.peers = []
+        self.trackers = []
 
     def _peer_id(self):
         lead_string = b'000000'
@@ -64,6 +45,12 @@ class Context():
 class Tracker():
 
     def __init__(self):
+        self.address = ''
+
+
+class Peer():
+
+    def __init__(self):
         pass
 
 
@@ -73,16 +60,28 @@ class PeerMessage():
         pass
 
 
-class Peer():
-
-    def __init__(self):
-        pass
-
-
 class Client():
 
     def __init__(self):
         self.context = Context()
+
+    def user_input(self):
+        parser = argparse.ArgumentParser(description="Take user input")
+        parser.add_argument('-m', dest="magnet", help="Magnet link")
+        parser.add_argument('-t', dest="torrent", help="Torrent file")
+        args = parser.parse_args()
+        if args.magnet:
+            input_type = 'magnet'
+            input_path = args.magnet
+        elif args.torrent:
+            input_type = 'torrent'
+            input_path = args.torrent
+        return input_type, input_path
+
+    def read_file_binary(self, file_path):
+        with open(file_path, 'rb') as file_object:
+            file = file_object.read()
+        return file
 
     def info_hash(self, metafile_info):
         encoded = bencode.bencode(metafile_info)
@@ -215,7 +214,16 @@ class Client():
         pass
 
     def run(self):
+        input_type, input_string = self.user_input()
+        if input_type is 'torrent':
+            raw_metafile = self.read_file_binary(input_string)
+            # parse metafile and add to context here
+        elif input_type is 'magnet':
+            info_hash, trackers = self.split_magnet_link(input_string)
+        # try dht
+        # try trackers
         self.get_metadata()
+        # if we have peers, download file:
         file_coro = self.get_file()
         main_task = self.context.loop.create_task(file_coro)
         self.context.loop.run_until_complete(main_task)
