@@ -70,6 +70,18 @@ class Tracker():
     def compose_url(self, base_url, request_params):
         return base_url + '?' + urlencode(request_params)
 
+    def format_peer_list(self, raw_peer_info):
+        peer_list = []
+        for i in range(0, len(raw_peer_info), 6):
+            peer = raw_peer_info[i:i + 6]
+            ip = socket.inet_ntoa(peer[:4])
+            port = self.unpack_port(peer[4:])
+            peer_list.append((ip, port))
+        return peer_list
+
+    def unpack_port(self, port):
+        return struct.unpack('>H', port)[0]
+
     async def http_request(self, url):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -88,7 +100,6 @@ class PeerMessage():
     def __init__(self):
         pass
 
-        # message passing
     def handshake(self):
         prefix = struct.pack('>B', 19)
         name = b'BitTorrent protocol'
@@ -134,8 +145,8 @@ class Client():
     def parse_metafile(self, raw_metafile):
         metafile_data = bencode.bdecode(raw_metafile)
         tracker_url = metafile_data[b'announce'].decode('utf-8')
-        file_info = metafile_data[b'info']
-        info_hash = self.info_hash(file_info)
+        info_dict = metafile_data[b'info']
+        info_hash = self.info_hash(info_dict)
         # TODO: parse pieces here?
         return tracker_url, info_hash
 
@@ -149,18 +160,6 @@ class Client():
     # DHT
     def query_dht(self):
         pass
-
-    def format_peer_list(self, raw_peer_info):
-        peer_list = []
-        for i in range(0, len(raw_peer_info), 6):
-            peer = raw_peer_info[i:i + 6]
-            ip = socket.inet_ntoa(peer[:4])
-            port = self.unpack_port(peer[4:])
-            peer_list.append((ip, port))
-        return peer_list
-
-    def unpack_port(self, port):
-        return struct.unpack('>H', port)[0]
 
     async def get_file(self):
         peer_tasks = []
@@ -197,8 +196,9 @@ class Client():
         if input_type is 'torrent':
             raw_metafile = self.read_file_binary(input_string)
             tracker_url, info_hash = self.parse_metafile(raw_metafile)
+            self.context.info_hash = info_hash
+            self.context.trackers.append(tracker_url)
             # do rest of metafile parsing
-            # add tracker to context
         elif input_type is 'magnet':
             info_hash, trackers = self.split_magnet_link(input_string)
             # add info hash, trackers to context
