@@ -64,7 +64,7 @@ class Tracker():
         tracker_task = self.context.loop.create_task(tracker_coro)
         response_bytes = self.context.loop.run_until_complete(tracker_task)
         tracker_response = bencode.bdecode(response_bytes)
-        # TODO: store tracker id and interval
+        # TODO: store tracker id and interval for repeat connections
         return self.format_peer_list(tracker_response[b'peers'])
 
     def compose_url(self, base_url, request_params):
@@ -87,6 +87,19 @@ class PeerMessage():
 
     def __init__(self):
         pass
+
+        # message passing
+    def handshake(self):
+        prefix = struct.pack('>B', 19)
+        name = b'BitTorrent protocol'
+        reserved = struct.pack('>8B', *([0] * 8))
+        return b''.join((
+            prefix,
+            name,
+            reserved,
+            self.context.info_hash,
+            self.context.peer_id
+        ))
 
 
 class Client():
@@ -123,24 +136,8 @@ class Client():
         tracker_url = metafile_data[b'announce'].decode('utf-8')
         file_info = metafile_data[b'info']
         info_hash = self.info_hash(file_info)
-        # TODO: parse pieces
+        # TODO: parse pieces here?
         return tracker_url, info_hash
-
-    # magnet link
-    def handle_magnet_link(self):
-        magnet_link = self.context.raw_inputfile.decode('utf-8')
-        info_hash, trackers = self.split_magnet_link(magnet_link)
-        self.context.info_hash = info_hash
-        self.query_dht(info_hash)
-        if self.context.has_peers:
-            for tracker_url in trackers:
-                if tracker_url.startswith('http'):
-                    self.make_tracker_request(tracker_url)
-                elif tracker_url.startswith('udp'):
-                    # TODO: need to handle udp trackers here too
-                    pass
-                if self.context.has_peers:
-                    break
 
     def split_magnet_link(self, magnet_link):
         magnet_parts = parse_qs(magnet_link)
@@ -164,19 +161,6 @@ class Client():
 
     def unpack_port(self, port):
         return struct.unpack('>H', port)[0]
-
-    # message passing
-    def handshake(self):
-        prefix = struct.pack('>B', 19)
-        name = b'BitTorrent protocol'
-        reserved = struct.pack('>8B', *([0] * 8))
-        return b''.join((
-            prefix,
-            name,
-            reserved,
-            self.context.info_hash,
-            self.context.peer_id
-        ))
 
     async def get_file(self):
         peer_tasks = []
