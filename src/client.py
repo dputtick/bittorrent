@@ -44,8 +44,37 @@ class Context():
 
 class Tracker():
 
-    def __init__(self):
-        self.address = ''
+    def __init__(self, address, context):
+        self.address = address
+        self.context = context
+
+    def make_request(self):
+        request_params = {
+            'info_hash': self.context.info_hash,
+            'peer_id': self.context.peer_id,
+            'port': self.context.port,
+            'uploaded': 0,
+            'downloaded': 0,
+            'left': 0,
+            'compact': 1,
+            'event': 'started'
+        }
+        request_url = self.compose_url(self.address, request_params)
+        tracker_coro = self.http_request(request_url)
+        tracker_task = self.context.loop.create_task(tracker_coro)
+        response_bytes = self.context.loop.run_until_complete(tracker_task)
+        tracker_response = bencode.bdecode(response_bytes)
+        # TODO: store tracker id and interval
+        return self.format_peer_list(tracker_response[b'peers'])
+
+    def compose_url(self, base_url, request_params):
+        return base_url + '?' + urlencode(request_params)
+
+    async def http_request(self, url):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                response_bytes = await response.read()
+                return response_bytes
 
 
 class Peer():
@@ -88,19 +117,14 @@ class Client():
         metafile_info_hash = sha1(encoded).digest()
         return metafile_info_hash
 
-    def get_metadata(self):
-        if self.context.input_type is 'magnet':
-            self.handle_magnet_link()
-        elif self.context.input_type is 'torrent':
-            self.handle_torrent_file()
-
     # .torrent file
-    def handle_torrent_file(self):
-        metafile_data = bencode.bdecode(self.context.raw_inputfile)
+    def parse_metafile(self, raw_metafile):
+        metafile_data = bencode.bdecode(raw_metafile)
         tracker_url = metafile_data[b'announce'].decode('utf-8')
         file_info = metafile_data[b'info']
-        self.context.info_hash = self.info_hash(file_info)
-        self.context.peers = self.make_tracker_request(tracker_url)
+        info_hash = self.info_hash(file_info)
+        # TODO: parse pieces
+        return tracker_url, info_hash
 
     # magnet link
     def handle_magnet_link(self):
@@ -128,35 +152,6 @@ class Client():
     # DHT
     def query_dht(self):
         pass
-
-    # tracker request
-    def make_tracker_request(self, tracker_url):
-        request_params = {
-            'info_hash': self.context.info_hash,
-            'peer_id': self.context.peer_id,
-            'port': self.context.port,
-            'uploaded': 0,
-            'downloaded': 0,
-            'left': 0,
-            'compact': 1,
-            'event': 'started'
-        }
-        tracker_request_url = self.compose_url(tracker_url, request_params)
-        tracker_coro = self.http_request(tracker_request_url)
-        tracker_task = self.context.loop.create_task(tracker_coro)
-        response_bytes = self.context.loop.run_until_complete(tracker_task)
-        tracker_response = bencode.bdecode(response_bytes)
-        # TODO: store tracker id and interval
-        self.context.peers = self.format_peer_list(tracker_response[b'peers'])
-
-    def compose_url(self, base_url, request_params):
-        return base_url + '?' + urlencode(request_params)
-
-    async def http_request(self, url):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                response_bytes = await response.read()
-                return response_bytes
 
     def format_peer_list(self, raw_peer_info):
         peer_list = []
@@ -217,12 +212,14 @@ class Client():
         input_type, input_string = self.user_input()
         if input_type is 'torrent':
             raw_metafile = self.read_file_binary(input_string)
-            # parse metafile and add to context here
+            tracker_url, info_hash = self.parse_metafile(raw_metafile)
+            # do rest of metafile parsing
+            # add tracker to context
         elif input_type is 'magnet':
             info_hash, trackers = self.split_magnet_link(input_string)
-        # try dht
-        # try trackers
-        self.get_metadata()
+            # add info hash, trackers to context
+        self.query_dht()
+        # make tracker requests
         # if we have peers, download file:
         file_coro = self.get_file()
         main_task = self.context.loop.create_task(file_coro)
