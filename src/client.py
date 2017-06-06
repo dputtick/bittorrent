@@ -142,14 +142,10 @@ class Client():
         return metafile_info_hash
 
     # .torrent file
-    def parse_metafile(self, raw_metafile):
-        metafile_data = bencode.bdecode(raw_metafile)
-        tracker_url = metafile_data[b'announce'].decode('utf-8')
-        info_dict = metafile_data[b'info']
-        info_hash = self.info_hash(info_dict)
-        # TODO: parse pieces here?
-        return tracker_url, info_hash
+    def split_piece_hashes(self, pieces):
+        return [pieces[i:i + 20] for i in range(0, len(pieces), 20)]
 
+    # magnet link
     def split_magnet_link(self, magnet_link):
         magnet_parts = parse_qs(magnet_link)
         trackers = magnet_parts.get('tr')
@@ -195,15 +191,21 @@ class Client():
         input_type, input_string = self.user_input()
         if input_type is 'torrent':
             raw_metafile = self.read_file_binary(input_string)
-            tracker_url, info_hash = self.parse_metafile(raw_metafile)
-            self.context.info_hash = info_hash
-            self.context.trackers.append(tracker_url)
-            # do rest of metafile parsing
+            metafile = bencode.bdecode(raw_metafile)
+            tracker_url = metafile[b'announce'].decode('utf-8')
+            tracker = Tracker(tracker_url, self.context)
+            self.context.trackers.append(tracker)
+            info_dict = metafile[b'info']
+            self.context.info_hash = self.info_hash(info_dict)
+            self.context.piece_hashes = self.split_piece_hashes(info_dict[b'pieces'])
+            self.context.name = info_dict[b'name']
         elif input_type is 'magnet':
-            info_hash, trackers = self.split_magnet_link(input_string)
-            # add info hash, trackers to context
+            self.context.info_hash, tracker_urls = self.split_magnet_link(input_string)
+            trackers = [Tracker(url) for url in tracker_urls]
+            self.context.trackers.extend(trackers)
         self.query_dht()
-        # make tracker requests
+        for tracker in self.context.trackers:
+            pass
         # if we have peers, download file:
         file_coro = self.get_file()
         main_task = self.context.loop.create_task(file_coro)
