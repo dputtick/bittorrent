@@ -48,7 +48,24 @@ class Tracker():
         self.address = address
         self.context = context
 
+    @property
+    def protocol(self):
+        if self.address.startswith('udp'):
+            return 'udp'
+        if self.address.startswith('http'):
+            return 'tcp'
+
     def make_request(self):
+        if self.protocol is 'tcp':
+            return self.tcp_request()
+        elif self.protocol is 'udp':
+            return None
+            # return self.udp_request()
+
+    def udp_request(self):
+        raise NotImplemented('Client does not handle udp trackers yet')
+
+    def tcp_request(self):
         request_params = {
             'info_hash': self.context.info_hash,
             'peer_id': self.context.peer_id,
@@ -91,8 +108,9 @@ class Tracker():
 
 class Peer():
 
-    def __init__(self):
-        pass
+    def __init__(self, address, port):
+        self.address = address
+        self.port = port
 
 
 class PeerMessage():
@@ -205,7 +223,8 @@ class Client():
             self.context.trackers.extend(trackers)
         self.query_dht()
         for tracker in self.context.trackers:
-            pass
+            peers = tracker.make_request()
+
         # if we have peers, download file:
         file_coro = self.get_file()
         main_task = self.context.loop.create_task(file_coro)
