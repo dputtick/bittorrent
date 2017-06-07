@@ -23,7 +23,7 @@ class Context():
         self.loop = asyncio.get_event_loop()
         self.port = PORT
         self.peer_id = self._peer_id()
-        self.peers = []
+        self.peers = {}
         self.trackers = []
 
     def _peer_id(self):
@@ -40,6 +40,17 @@ class Context():
             return False
         else:
             raise RuntimeError("Error with peer list")
+
+    def add_peers(self, *new_peers):
+        for peer in new_peers:
+            ip, port = peer
+            if ip not in self.peers:
+                self.peers[ip] = Peer(ip, port, self)
+
+    def add_trackers(self, *new_trackers):
+        for tracker in new_trackers:
+            self.trackers.append(Tracker(tracker, self))
+            # TODO: check for existing tracker
 
 
 class Tracker():
@@ -108,27 +119,49 @@ class Tracker():
 
 class Peer():
 
-    def __init__(self, address, port):
+    def __init__(self, address, port, context):
         self.address = address
         self.port = port
+        self.context = context
 
+    async def peer_connection(self):
+        print("Connecting to {}".format(self.address))
+        try:
+            fut = asyncio.open_connection(host=self.address, port=self.port)
+            self.reader, self.writer = await asyncio.wait_for(fut, timeout=5)
+        except ConnectionRefusedError:
+            print("Connection to {} refused".format(self.address))
+            return
+        except asyncio.TimeoutError:
+            print("Connection to {} timed out".format(self.address))
+            return
+        # handshake
+        handshake_resp = await self.handshake()
+        self.parse_handshake(handshake_resp)
 
-class PeerMessage():
+        # determine pieces/blocks that the peer has
+        # check if those are in the set of pieces
 
-    def __init__(self):
-        pass
+    def parse_handshake(self, handshake_resp):
+        bencode.bdecode(handshake_resp)
 
-    def handshake(self):
-        prefix = struct.pack('>B', 19)
-        name = b'BitTorrent protocol'
-        reserved = struct.pack('>8B', *([0] * 8))
-        return b''.join((
-            prefix,
-            name,
-            reserved,
+    async def handshake(self):
+        handshake = struct.pack(
+            '>B19s8x20s20s',
+            19,
+            b'BitTorrent protocol',
             self.context.info_hash,
-            self.context.peer_id
-        ))
+            self.context.peer_id)
+        self.writer.write(handshake)
+        await self.writer.drain()
+        resp = await self.reader.read()
+        return resp
+
+    async def send_message(self, message_type):
+        self.writer.write(message)
+        await self.writer.drain()
+
+
 
 
 class Client():
@@ -149,6 +182,7 @@ class Client():
             input_path = args.torrent
         return input_type, input_path
 
+    # .torrent file
     def read_file_binary(self, file_path):
         with open(file_path, 'rb') as file_object:
             file = file_object.read()
@@ -159,7 +193,6 @@ class Client():
         metafile_info_hash = sha1(encoded).digest()
         return metafile_info_hash
 
-    # .torrent file
     def split_piece_hashes(self, pieces):
         return [pieces[i:i + 20] for i in range(0, len(pieces), 20)]
 
@@ -175,35 +208,12 @@ class Client():
     def query_dht(self):
         pass
 
+    # Peer communication
     async def get_file(self):
         peer_tasks = []
-        for peer in self.context.peers:
-            peer_tasks.append(self.peer_connection(peer))
+        for peer in self.context.peers.values():
+            peer_tasks.append(peer.peer_connection())
         await asyncio.gather(*peer_tasks)
-
-    async def peer_connection(self, peer):
-        print("Connecting to {}".format(peer))
-        ip, port = peer
-        try:
-            fut = asyncio.open_connection(host=ip, port=port)
-            reader, writer = await asyncio.wait_for(fut, timeout=5)
-        except ConnectionRefusedError:
-            print("Connection to {} refused".format(ip))
-            return
-        except asyncio.TimeoutError:
-            print("Connection to {} timed out".format(ip))
-            return
-        # handshake
-        handshake = self.handshake()
-        writer.write(handshake)
-        await writer.drain()
-        resp = await reader.read()
-        print(resp)
-        # determine pieces/blocks that the peer has
-        # check if those are in the set of pieces
-
-    async def get_piece(self):
-        pass
 
     def run(self):
         input_type, input_string = self.user_input()
@@ -211,21 +221,18 @@ class Client():
             raw_metafile = self.read_file_binary(input_string)
             metafile = bencode.bdecode(raw_metafile)
             tracker_url = metafile[b'announce'].decode('utf-8')
-            tracker = Tracker(tracker_url, self.context)
-            self.context.trackers.append(tracker)
+            self.context.add_trackers(tracker_url)
             info_dict = metafile[b'info']
             self.context.info_hash = self.info_hash(info_dict)
             self.context.piece_hashes = self.split_piece_hashes(info_dict[b'pieces'])
             self.context.name = info_dict[b'name']
         elif input_type is 'magnet':
             self.context.info_hash, tracker_urls = self.split_magnet_link(input_string)
-            trackers = [Tracker(url) for url in tracker_urls]
-            self.context.trackers.extend(trackers)
+            self.context.add_trackers(*tracker_urls)
         self.query_dht()
         for tracker in self.context.trackers:
             peers = tracker.make_request()
-
-        # if we have peers, download file:
+            self.context.add_peers(*peers)
         file_coro = self.get_file()
         main_task = self.context.loop.create_task(file_coro)
         self.context.loop.run_until_complete(main_task)
