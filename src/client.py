@@ -14,7 +14,7 @@ import bencode
 import aiohttp
 
 
-PORT = 51413
+PORT = 51500
 
 
 class Context():
@@ -24,7 +24,7 @@ class Context():
         self.port = PORT
         self.peer_id = self._peer_id()
         self.peers = {}
-        self.trackers = []
+        self.trackers = {}
 
     def _peer_id(self):
         lead_string = b'000000'
@@ -49,8 +49,8 @@ class Context():
 
     def add_trackers(self, *new_trackers):
         for tracker in new_trackers:
-            self.trackers.append(Tracker(tracker, self))
-            # TODO: check for existing tracker
+            if tracker.address not in self.trackers:
+                self.trackers[tracker.address] = Tracker(tracker, self)
 
 
 class Tracker():
@@ -123,27 +123,35 @@ class Peer():
         self.address = address
         self.port = port
         self.context = context
+        self.choked = True
+        self.interested = False
 
     async def peer_connection(self):
-        print("Connecting to {}".format(self.address))
+        print("{}: connecting".format(self.address))
         try:
             fut = asyncio.open_connection(host=self.address, port=self.port)
             self.reader, self.writer = await asyncio.wait_for(fut, timeout=5)
         except ConnectionRefusedError:
-            print("Connection to {} refused".format(self.address))
+            print("{}: connection refused".format(self.address))
             return
         except asyncio.TimeoutError:
-            print("Connection to {} timed out".format(self.address))
+            print("{} connection timed out".format(self.address))
             return
         # handshake
         handshake_resp = await self.handshake()
-        self.parse_handshake(handshake_resp)
-
+        print(handshake_resp)
+        self.id = self.parse_handshake(handshake_resp)
         # determine pieces/blocks that the peer has
         # check if those are in the set of pieces
 
     def parse_handshake(self, handshake_resp):
-        bencode.bdecode(handshake_resp)
+        peer_id = handshake_resp[28:48]
+        return peer_id
+        # Length = 1 byte
+        # Procotol = 19 bytes
+        # 8 bytes
+        # 20 bytes
+        # 20 bytes
 
     async def handshake(self):
         handshake = struct.pack(
@@ -153,15 +161,18 @@ class Peer():
             self.context.info_hash,
             self.context.peer_id)
         self.writer.write(handshake)
+        print('{}: handshake sent'.format(self.address))
         await self.writer.drain()
+        print('{}: handshake drained'.format(self.address))
         resp = await self.reader.read()
         return resp
 
-    async def send_message(self, message_type):
+    def keep_alive():
+        return b''
+
+    async def send_message(self, message):
         self.writer.write(message)
         await self.writer.drain()
-
-
 
 
 class Client():
@@ -210,10 +221,8 @@ class Client():
 
     # Peer communication
     async def get_file(self):
-        peer_tasks = []
-        for peer in self.context.peers.values():
-            peer_tasks.append(peer.peer_connection())
-        await asyncio.gather(*peer_tasks)
+        peer_coros = [peer.peer_connection() for peer in self.context.peers.values()]
+        await asyncio.gather(*peer_coros)
 
     def run(self):
         input_type, input_string = self.user_input()
@@ -230,7 +239,7 @@ class Client():
             self.context.info_hash, tracker_urls = self.split_magnet_link(input_string)
             self.context.add_trackers(*tracker_urls)
         self.query_dht()
-        for tracker in self.context.trackers:
+        for tracker in self.context.trackers.values():
             peers = tracker.make_request()
             self.context.add_peers(*peers)
         file_coro = self.get_file()
